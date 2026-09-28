@@ -9,6 +9,7 @@ data storage lives behind data_providers.DataProvider.
 """
 
 from copy import deepcopy
+import os
 
 import pandas as pd
 import streamlit as st
@@ -20,6 +21,7 @@ from config import (
 )
 from currency_models import build_default_weight_profiles, build_default_risk_beta, _renormalized_profile
 from data_providers.manual_provider import ManualDataProvider
+from data_providers.supabase_provider import SupabaseDataProvider
 from scoring_engine import compute_all
 from components.dashboard import render_dashboard
 from components.currency_detail import render_currency_detail
@@ -34,9 +36,39 @@ st.set_page_config(page_title="FX Fundamental Strength & Macro Bias Engine", lay
 # Session state
 # ---------------------------------------------------------------------------
 
+def _secret_value(name: str):
+    """Read a Streamlit secret first, then an environment variable."""
+    try:
+        value = st.secrets.get(name)
+        if value:
+            return str(value)
+        nested = st.secrets.get("supabase", {})
+        if isinstance(nested, dict) and nested.get(name):
+            return str(nested[name])
+    except Exception:
+        pass
+    return os.environ.get(name)
+
+
+def _create_provider():
+    url = _secret_value("SUPABASE_URL")
+    key = _secret_value("SUPABASE_SECRET_KEY") or _secret_value("SUPABASE_SERVICE_ROLE_KEY")
+    if not url or not key:
+        return ManualDataProvider()
+    try:
+        return SupabaseDataProvider(url, key)
+    except Exception as exc:
+        st.error(
+            "Supabase is configured but could not load saved inputs. Check the "
+            "project URL, server secret key, and the SQL setup in SUPABASE_SETUP.md. "
+            f"Details: {exc}"
+        )
+        st.stop()
+
+
 def _init_state():
     if "provider" not in st.session_state:
-        st.session_state.provider = ManualDataProvider()
+        st.session_state.provider = _create_provider()
     if "base_weights" not in st.session_state:
         st.session_state.base_weights = deepcopy(DEFAULT_BASE_WEIGHTS)
     if "xau_weights" not in st.session_state:
@@ -54,6 +86,14 @@ def _weight_profiles():
 
 
 _init_state()
+
+if isinstance(st.session_state.provider, SupabaseDataProvider):
+    st.sidebar.caption("Manual inputs are saved to Supabase.")
+else:
+    st.sidebar.info(
+        "Supabase is not configured. Manual inputs are temporary until you follow "
+        "SUPABASE_SETUP.md and add the server secrets."
+    )
 
 # ---------------------------------------------------------------------------
 # Sidebar
@@ -74,9 +114,14 @@ st.session_state.horizon = st.sidebar.selectbox(
 with st.sidebar.expander("Data"):
     if st.button("Load illustrative sample data"):
         load_sample_data(st.session_state.provider)
+        if isinstance(st.session_state.provider, SupabaseDataProvider):
+            st.session_state.provider.save()
         st.success("Sample data loaded. This is illustrative, not live data -- replace with real inputs.")
     if st.button("Reset all data"):
-        st.session_state.provider = ManualDataProvider()
+        if isinstance(st.session_state.provider, SupabaseDataProvider):
+            st.session_state.provider.clear()
+        else:
+            st.session_state.provider = ManualDataProvider()
         st.success("All manual data cleared.")
 
 # ---------------------------------------------------------------------------
@@ -118,6 +163,11 @@ elif page == "Currency Matrix":
 elif page == "Manual Data Entry":
     asset = st.sidebar.selectbox("Asset", ALL_ASSETS, format_func=lambda a: f"{a} -- {ASSET_NAMES[a]}")
     render_asset_input_page(asset, st.session_state.provider)
+    if isinstance(st.session_state.provider, SupabaseDataProvider):
+        try:
+            st.session_state.provider.save()
+        except Exception as exc:
+            st.error(f"Could not save manual inputs to Supabase: {exc}")
 
 elif page == "Model Settings":
     st.subheader("Model Settings -- Category Weights & Risk Betas")
@@ -190,9 +240,10 @@ elif page == "About":
         "concepts (entries, stops, targets, risk/reward). It answers *what is the current fundamental "
         "strength/weakness of each currency/asset, why, and how strong is the evidence* -- not *should I "
         "buy or sell*.\n\n"
-        "Version 1 uses **manual data entry only**. All data flows through a `DataProvider` interface "
-        "(see `data_providers/base.py`); a future API-backed provider can replace manual entry without any "
-        "change to the scoring engine, normalization, weighting, or UI -- see `README.md`.\n\n"
+        "Manual inputs, including their dates, can be stored in Supabase when the server secrets are "
+        "configured. The in-memory provider remains available for local use. See `SUPABASE_SETUP.md` "
+        "for the table setup and deployment configuration. All data flows through a `DataProvider` "
+        "interface (see `data_providers/base.py`), so scoring logic stays independent of storage.\n\n"
         "The model is fully **rules-based and deterministic** -- no machine learning, no black box. Every "
         "score is reproducible from the driver table shown on each Currency Detail page."
     )
