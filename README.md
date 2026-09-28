@@ -161,3 +161,8 @@ Geopolitical Risk.
   configured in `metric_catalog.py`; the in-app **Model Settings** page
   exposes category-level weights and risk-betas (the two "knobs" the brief
   calls out most), not every individual driver constant.
+
+
+## Supabase persistence
+
+Manual data, including entered dates, can be persisted across Streamlit refreshes with Supabase. See [SUPABASE_SETUP.md](SUPABASE_SETUP.md) for the SQL table setup and server secret configuration.
