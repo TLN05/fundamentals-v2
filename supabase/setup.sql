@@ -6,7 +6,6 @@ create table if not exists public.manual_values (
     asset text not null,
     field_key text not null,
     raw_value jsonb not null default '{}'::jsonb,
-    updated_at timestamptz not null default now(),
     primary key (asset, field_key)
 );
 
